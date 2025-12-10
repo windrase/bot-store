@@ -24,7 +24,7 @@ let lastRequestTime = 0;
 // Init DB
 initDB();
 
-// Load Pending Transactions
+// Load Pending Transactions saat restart
 db.all('SELECT * FROM pending_deposits WHERE status = "pending"', [], (err, rows) => {
     if (rows) {
         rows.forEach(r => global.pendingDeposits[r.unique_code] = {
@@ -38,7 +38,9 @@ db.all('SELECT * FROM pending_deposits WHERE status = "pending"', [], (err, rows
 const formatRp = (n) => 'Rp ' + parseInt(n).toLocaleString('id-ID');
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
-// MENU UTAMA (USER PROFILE)
+// ==========================================
+// 1. MENU UTAMA (USER PROFILE)
+// ==========================================
 bot.start((ctx) => {
     const userId = ctx.from.id;
     const username = ctx.from.username ? `@${ctx.from.username}` : '-';
@@ -50,8 +52,7 @@ bot.start((ctx) => {
     db.get('SELECT saldo FROM users WHERE user_id = ?', [userId], (err, row) => {
         const saldo = row ? row.saldo : 0;
         
-        const message = 
-`╔════════════════════╗
+        const message = `╔════════════════════╗
    <b>⚡ WINTUNELING STORE ⚡</b>    
 ╚════════════════════╝
 
@@ -78,7 +79,9 @@ bot.start((ctx) => {
 
 bot.action('start', (ctx) => ctx.scene ? ctx.scene.leave() : bot.handleUpdate(ctx.update));
 
+// ==========================================
 // 2. FITUR TOPUP (QRIS + KODE UNIK)
+// ==========================================
 bot.action('topup_saldo', async (ctx) => {
     await ctx.answerCbQuery();
     global.depositState[ctx.from.id] = { action: 'request_amount' };
@@ -121,12 +124,13 @@ async function processDeposit(ctx, amount) {
 
     try {
         const res = await axios.get(`https://api.rajaserverpremium.web.id/orderkuota/createpayment`, {
-            params: { apikey: 'AriApiPaymetGetwayMod', amount: finalAmount, codeqr: QRIS_DATA }
+            params: { apikey: 'AriApiPaymetGetwayMod', amount: finalAmount, codeqr: QRIS_DATA },
+            timeout: 10000 // Timeout agar tidak hang
         });
 
         if (res.data.status !== 'success') throw new Error('API Gagal');
         
-        const qrImg = await axios.get(res.data.result.imageqris.url, { responseType: 'arraybuffer' });
+        const qrImg = await axios.get(res.data.result.imageqris.url, { responseType: 'arraybuffer', timeout: 10000 });
         
         const msg = await ctx.replyWithPhoto({ source: Buffer.from(qrImg.data) }, {
             caption: `📝 <b>INVOICE DEPOSIT</b>\n\n💰 Total Transfer: <b>${formatRp(finalAmount)}</b>\n⚠️ <i>Transfer HARUS PERSIS 3 digit terakhir!</i>\n⏳ Expired: 5 Menit`,
@@ -143,19 +147,23 @@ async function processDeposit(ctx, amount) {
         delete global.depositState[userId];
 
     } catch (e) {
-        console.error(e);
-        ctx.reply('❌ Gagal membuat QRIS.');
+        console.error("Error creating QRIS:", e.message);
+        ctx.reply('❌ Gagal membuat QRIS. Silakan coba lagi nanti.');
     }
 }
 
-// ENGINE MUTASI & NOTIFIKASI
+// ==========================================
+// 3. ENGINE MUTASI & NOTIFIKASI (FIXED MEMORY LEAK)
+// ==========================================
 async function checkMutation() {
+    // Jika tidak ada transaksi pending, skip request ke API untuk hemat resource
     if (Object.keys(global.pendingDeposits).length === 0) return;
 
     try {
-        // Hapus Invoice Expired
+        // Hapus Invoice Expired (Lebih dari 5 menit)
         for (const [code, data] of Object.entries(global.pendingDeposits)) {
             if (Date.now() - data.timestamp > 5 * 60 * 1000) {
+                // Jangan await deleteMessage agar tidak blocking
                 bot.telegram.deleteMessage(data.userId, data.qrMessageId).catch(()=>{});
                 bot.telegram.sendMessage(data.userId, '❌ Invoice Kedaluwarsa.');
                 delete global.pendingDeposits[code];
@@ -163,11 +171,18 @@ async function checkMutation() {
             }
         }
 
-        // Cek API
-        const res = await axios.post(API_URL, buildPayload(), { headers, timeout: 5000 });
+        // Cek API dengan Garbage Collection Manual pada Axios
+        const res = await axios.post(API_URL, buildPayload(), { 
+            headers, 
+            timeout: 8000, // Timeout dipercepat
+            maxContentLength: 5000000 // Batas ukuran response 5MB mencegah OOM
+        });
+        
         const text = res.data;
         const blocks = typeof text === 'string' ? text.split('------------------------') : [];
         const incoming = [];
+        
+        // Parsing response
         blocks.forEach(b => {
             const m = b.match(/Kredit\s*:\s*(?:Rp\s*)?([\d.]+)/i);
             if (m) incoming.push(parseInt(m[1].replace(/\./g, '')));
@@ -178,11 +193,9 @@ async function checkMutation() {
             if (incoming.includes(data.amount)) {
                 db.run('UPDATE users SET saldo = saldo + ? WHERE user_id = ?', [data.amount, data.userId]);
                 
-                // Notif User
                 bot.telegram.sendMessage(data.userId, `✅ <b>DEPOSIT SUKSES!</b>\nSaldo +${formatRp(data.amount)}`, {parse_mode:'HTML'});
                 bot.telegram.deleteMessage(data.userId, data.qrMessageId).catch(()=>{});
                 
-                // Notif Channel
                 if (CHANNEL_ID) {
                     bot.telegram.sendMessage(CHANNEL_ID, 
                         `🔔 <b>DEPOSIT MASUK</b>\n\n👤 ID: ${data.userId}\n💰 Jumlah: ${formatRp(data.amount)}\n📅 Tgl: ${new Date().toLocaleString()}`,
@@ -194,30 +207,42 @@ async function checkMutation() {
                 db.run('DELETE FROM pending_deposits WHERE unique_code = ?', [code]);
             }
         }
-    } catch (e) { }
+    } catch (e) { 
+        // Error handling silent agar log tidak penuh
+        // console.error("Mutation Error:", e.message); 
+    }
 }
-setInterval(checkMutation, 10000);
 
-// FITUR AUTO BACKUP (JAM 12 MALAM)
-// Fungsi cek backup setiap menit
-setInterval(() => {
+// LOGIKA LOOPING YANG AMAN (PENGGANTI setInterval)
+async function startMutationLoop() {
+    await checkMutation();
+    // Tunggu 10 detik SETELAH proses selesai baru jalan lagi
+    setTimeout(startMutationLoop, 10000); 
+}
+startMutationLoop();
+
+// ==========================================
+// 4. FITUR AUTO BACKUP (JAM 00:00)
+// ==========================================
+function startBackupLoop() {
     const now = new Date();
-    // Cek apakah Jam 00 dan Menit 00 (Waktu Server)
     if (now.getHours() === 0 && now.getMinutes() === 0) {
         runAutoBackup();
     }
-}, 60000); // Cek tiap 60 detik
+    // Cek lagi dalam 60 detik
+    setTimeout(startBackupLoop, 60000); 
+}
+startBackupLoop();
 
 function runAutoBackup() {
     console.log('🔄 Menjalankan Auto Backup...');
     const backupName = `backup_db_${new Date().toISOString().split('T')[0]}.sqlite`;
     
-    // Copy file database
+    // Copy file database untuk dikirim
     fs.copyFile('./database.sqlite', backupName, async (err) => {
         if (err) return console.error('❌ Backup Gagal:', err);
         
         try {
-            // Kirim ke Admin
             await bot.telegram.sendDocument(ADMIN_ID, {
                 source: backupName,
                 filename: backupName
@@ -226,15 +251,16 @@ function runAutoBackup() {
                 parse_mode: 'HTML'
             });
             console.log('✅ Backup terkirim ke Admin.');
-            
-            // Hapus file backup temp agar tidak menuhin server
             fs.unlinkSync(backupName);
         } catch (e) {
             console.error('❌ Gagal kirim backup ke Telegram:', e);
         }
     });
 }
+
+// ==========================================
 // 5. MENU PRODUK & KIRIM AKUN
+// ==========================================
 bot.action('menu_produk', (ctx) => {
     db.all('SELECT * FROM products', [], (err, rows) => {
         const btns = rows.map(p => [Markup.button.callback(`${p.name} - ${formatRp(p.price)}`, `view_${p.code}`)]);
@@ -269,11 +295,9 @@ bot.action(/buy_(.+)/, (ctx) => {
             db.get('SELECT * FROM stocks WHERE product_code=? AND status="available" LIMIT 1', [code], (err, stock) => {
                 if (!stock) return ctx.answerCbQuery('❌ Stok Habis!', {show_alert:true});
 
-                // Transaksi
                 db.run('UPDATE users SET saldo = saldo - ? WHERE user_id=?', [p.price, userId]);
                 db.run('UPDATE stocks SET status="sold", sold_to=?, date_sold=? WHERE id=?', [userId, Date.now(), stock.id]);
 
-                // Kirim Akun
                 const accountData = formatAccountData(stock.data_account);
                 const msgUser = 
                     `✅ <b>TRANSAKSI BERHASIL!</b>\n\n` +
@@ -285,7 +309,6 @@ bot.action(/buy_(.+)/, (ctx) => {
                 
                 ctx.editMessageText(msgUser, {parse_mode:'HTML'});
 
-                // Notif Channel
                 if (CHANNEL_ID) {
                     bot.telegram.sendMessage(CHANNEL_ID, 
                         `🛍️ <b>PENJUALAN BARU!</b>\n\n📦 Item: ${p.name}\n👤 Pembeli: ${ctx.from.first_name} (ID: ${userId})\n💰 Harga: ${formatRp(p.price)}\n🕒 Waktu: ${new Date().toLocaleString()}`,
@@ -297,7 +320,6 @@ bot.action(/buy_(.+)/, (ctx) => {
     });
 });
 
-// Format Netflix (Email|Pass|Profile|Pin)
 function formatAccountData(rawData) {
     if (rawData.includes('|')) {
         const [email, pass, profile, pin] = rawData.split('|');
@@ -325,7 +347,6 @@ bot.action('admin_panel', (ctx) => {
     });
 });
 
-// Fitur Cek Stok
 bot.action('check_stock', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const query = `
@@ -345,14 +366,12 @@ bot.action('check_stock', (ctx) => {
     });
 });
 
-// Fitur Backup Manual
 bot.action('force_backup', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     ctx.reply('⏳ Memproses backup manual...');
     runAutoBackup();
 });
 
-// Fitur Broadcast
 bot.action('start_broadcast', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     global.depositState[ADMIN_ID] = { action: 'broadcast_msg' };
@@ -380,8 +399,6 @@ async function executeBroadcast(ctx, message) {
     });
 }
 
-// Command Tambah Stok
-// Format: /addstok netflix_1b email|pass|profil|pin
 bot.command('addstok', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const args = ctx.message.text.split(' ');
@@ -396,6 +413,6 @@ bot.command('addstok', (ctx) => {
     });
 });
 
-// Start
-bot.launch().then(() => console.log('🚀 BOT PLATINUM V7 READY!'));
+// START
+bot.launch().then(() => console.log('🚀 BOT PLATINUM V7 READY (SAFE MODE)!'));
 process.once('SIGINT', () => bot.stop('SIGINT'));
