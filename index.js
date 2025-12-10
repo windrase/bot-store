@@ -6,7 +6,7 @@ const path = require('path');
 const { db, initDB } = require('./database');
 const { buildPayload, headers, API_URL } = require('./api-cekpayment-orkut');
 
-// --- CEK CONFIG ---
+//  CEK CONFIG
 if (!process.env.BOT_TOKEN) {
     console.error('❌ ERROR: Jalankan "npm run setup" terlebih dahulu!');
     process.exit(1);
@@ -17,7 +17,7 @@ const ADMIN_ID = parseInt(process.env.ADMIN_ID);
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const QRIS_DATA = process.env.DATA_QRIS;
 
-// Mengatur status user (sedang deposit/broadcast/restore)
+// GLOBAL STATE
 global.state = {}; 
 global.pendingDeposits = {};
 let lastRequestTime = 0;
@@ -45,14 +45,11 @@ const showMainMenu = async (ctx, isEdit = false) => {
     const username = ctx.from.username ? `@${ctx.from.username}` : 'Hidden';
     const fullName = ctx.from.first_name;
 
-    // Reset state agar tidak nyangkut di mode broadcast/restore
     delete global.state[userId];
 
-    // Simpan data user
     db.run('INSERT OR IGNORE INTO users (user_id, username, full_name, joined_at) VALUES (?, ?, ?, ?)', 
         [userId, username, fullName, Date.now()]);
 
-    // Ambil saldo terbaru
     db.get('SELECT saldo FROM users WHERE user_id = ?', [userId], async (err, row) => {
         const saldo = row ? row.saldo : 0;
         
@@ -81,7 +78,6 @@ const showMainMenu = async (ctx, isEdit = false) => {
 
         try {
             if (isEdit) {
-                // Coba edit, jika error (misal tipe pesan beda), hapus & kirim baru
                 await ctx.editMessageText(message, { parse_mode: 'HTML', reply_markup: keyboard.reply_markup }).catch(async () => {
                     await ctx.deleteMessage().catch(()=>{});
                     await ctx.replyWithHTML(message, keyboard);
@@ -89,30 +85,30 @@ const showMainMenu = async (ctx, isEdit = false) => {
             } else {
                 await ctx.replyWithHTML(message, keyboard);
             }
-        } catch (e) {
-            console.log("Menu Error:", e.message);
-        }
+        } catch (e) {}
     });
 };
 
-// Handle Command /start dan /menu
 bot.command(['start', 'menu'], (ctx) => showMainMenu(ctx, false));
-
-// Handle Tombol Back (Menggunakan logika smart agar tidak freeze)
 bot.action(['back_home', 'start'], async (ctx) => {
     await ctx.answerCbQuery();
     showMainMenu(ctx, true);
 });
 
-// 2. FITUR USER: CEK STOK & BELI
-bot.action('user_check_stock', (ctx) => {
+// FITUR CEK STOK & BELI
+// Fungsi Query Stok (Dipakai Admin & User)
+const getStockReport = (cb) => {
     const query = `
-        SELECT p.name, COUNT(s.id) as count 
+        SELECT p.name, p.code, COUNT(s.id) as count 
         FROM products p 
         LEFT JOIN stocks s ON p.code = s.product_code AND s.status = 'available'
         GROUP BY p.code
     `;
-    db.all(query, [], (err, rows) => {
+    db.all(query, [], (err, rows) => cb(rows));
+};
+
+bot.action('user_check_stock', (ctx) => {
+    getStockReport((rows) => {
         let msg = '📦 <b>INFO STOK TERSEDIA</b>\n\n';
         if (!rows || rows.length === 0) msg += "<i>Belum ada produk.</i>";
         else rows.forEach(r => { msg += `🔹 <b>${r.name}</b>: ${r.count} pcs\n`; });
@@ -158,7 +154,6 @@ bot.action(/buy_(.+)/, (ctx) => {
             db.get('SELECT * FROM stocks WHERE product_code=? AND status="available" LIMIT 1', [code], (err, stock) => {
                 if (!stock) return ctx.answerCbQuery('❌ Stok Habis!', {show_alert:true});
 
-                // Proses Transaksi
                 db.run('UPDATE users SET saldo = saldo - ? WHERE user_id=?', [p.price, userId]);
                 db.run('UPDATE stocks SET status="sold", sold_to=?, date_sold=? WHERE id=?', [userId, Date.now(), stock.id]);
 
@@ -173,7 +168,6 @@ bot.action(/buy_(.+)/, (ctx) => {
                 
                 ctx.editMessageText(msgUser, {parse_mode:'HTML'});
 
-                // Notif ke Channel (Estetik)
                 if (CHANNEL_ID) {
                     bot.telegram.sendMessage(CHANNEL_ID, 
                         `🛍️ <b>NEW ORDER!</b>\n\n` +
@@ -267,7 +261,7 @@ async function checkMutation() {
         for (const [code, data] of Object.entries(global.pendingDeposits)) {
             if (Date.now() - data.timestamp > 5 * 60 * 1000) {
                 bot.telegram.deleteMessage(data.userId, data.qrMessageId).catch(()=>{});
-                bot.telegram.sendMessage(data.userId, '❌ Invoice Kedaluwarsa. Silakan request ulang.');
+                bot.telegram.sendMessage(data.userId, '❌ Invoice Kedaluwarsa.');
                 delete global.pendingDeposits[code];
                 db.run('DELETE FROM pending_deposits WHERE unique_code = ?', [code]);
             }
@@ -283,30 +277,18 @@ async function checkMutation() {
             if (m) incoming.push(parseInt(m[1].replace(/\./g, '')));
         });
 
-        // Match Logic
         for (const [code, data] of Object.entries(global.pendingDeposits)) {
             if (incoming.includes(data.amount)) {
                 db.run('UPDATE users SET saldo = saldo + ? WHERE user_id = ?', [data.amount, data.userId]);
                 
-                // Notif User (Menarik)
                 bot.telegram.sendMessage(data.userId, 
-                    `✅ <b>DEPOSIT BERHASIL!</b>\n\n` +
-                    `💰 Nominal: ${formatRp(data.amount)}\n` +
-                    `📅 Waktu: ${new Date().toLocaleString('id-ID')}\n\n` +
-                    `<i>Saldo telah ditambahkan ke akun Anda.</i>`, 
+                    `✅ <b>DEPOSIT BERHASIL!</b>\n\n💰 Nominal: ${formatRp(data.amount)}\n📅 Waktu: ${new Date().toLocaleString('id-ID')}`, 
                     {parse_mode:'HTML'}
                 );
                 bot.telegram.deleteMessage(data.userId, data.qrMessageId).catch(()=>{});
                 
-                // Notif Channel (Blockquote)
                 if (CHANNEL_ID) {
-                    const quoteMsg = 
-`<blockquote>
-🔔 <b>DEPOSIT RECEIVED</b>
-👤 <b>User ID:</b> ${data.userId}
-💰 <b>Amount:</b> ${formatRp(data.amount)}
-📅 <b>Date:</b> ${new Date().toLocaleString('id-ID')}
-</blockquote>`;
+                    const quoteMsg = `<blockquote>🔔 <b>DEPOSIT RECEIVED</b>\n👤 <b>User ID:</b> ${data.userId}\n💰 <b>Amount:</b> ${formatRp(data.amount)}\n📅 <b>Date:</b> ${new Date().toLocaleString('id-ID')}</blockquote>`;
                     bot.telegram.sendMessage(CHANNEL_ID, quoteMsg, { parse_mode: 'HTML' });
                 }
 
@@ -316,15 +298,10 @@ async function checkMutation() {
         }
     } catch (e) { }
 }
-
-// Loop Cek Mutasi yang Aman
-const startMutationLoop = async () => {
-    await checkMutation();
-    setTimeout(startMutationLoop, 10000);
-};
+const startMutationLoop = async () => { await checkMutation(); setTimeout(startMutationLoop, 10000); };
 startMutationLoop();
 
-// HANDLER TEXT & DOCUMENT (ADMIN LOGIC)
+// HANDLER TEXT & ADMIN LOGIC
 bot.on(['text', 'photo', 'document'], async (ctx) => {
     const userId = ctx.from.id;
     const userState = global.state[userId];
@@ -339,7 +316,7 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
     // 2. Logic Admin
     if (userId !== ADMIN_ID) return;
 
-    // Command Add Saldo Manual: /addsaldo 12345 50000
+    // Command Add Saldo
     if (ctx.message.text && ctx.message.text.startsWith('/addsaldo')) {
         const args = ctx.message.text.split(' ');
         const targetId = args[1];
@@ -352,13 +329,13 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
                 ctx.reply(`✅ Berhasil tambah ${formatRp(amount)} ke ID ${targetId}`);
                 bot.telegram.sendMessage(targetId, `💰 <b>BONUS SALDO DARI ADMIN</b>\nJumlah: ${formatRp(amount)}`, {parse_mode:'HTML'}).catch(()=>{});
             } else {
-                ctx.reply('❌ User ID tidak ditemukan di database.');
+                ctx.reply('❌ User ID tidak ditemukan.');
             }
         });
         return;
     }
 
-    // Command Add Stok: /addstok netflix_1b data
+    // Command Add Stok (DENGAN VALIDASI)
     if (ctx.message.text && ctx.message.text.startsWith('/addstok')) {
         const args = ctx.message.text.split(' ');
         const code = args[1];
@@ -366,21 +343,26 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
 
         if (!code || !data) return ctx.reply('❌ Format: /addstok <kode> <data>');
 
-        db.run('INSERT INTO stocks (product_code, data_account) VALUES (?, ?)', [code, data], (err) => {
-            if (err) return ctx.reply('❌ Gagal simpan ke database.');
-            ctx.reply(`✅ Stok ${code} berhasil ditambah.`);
+        // Cek dulu apakah kode ada di database
+        db.get('SELECT name FROM products WHERE code = ?', [code], (err, row) => {
+            if (!row) return ctx.reply(`❌ Kode '${code}' SALAH.\n\nKode tersedia:\n- netflix_1b\n- yt_prem\n- capcut_pro\n- gemini_adv\n- alight_mo`);
+            
+            // Jika kode benar, insert
+            db.run('INSERT INTO stocks (product_code, data_account, status) VALUES (?, ?, "available")', [code, data], (err) => {
+                if (err) return ctx.reply('❌ Database Error.');
+                ctx.reply(`✅ Stok <b>${row.name}</b> berhasil ditambah!`, {parse_mode:'HTML'});
+            });
         });
         return;
     }
 
-    // Handle Broadcast (Foto/Teks)
+    // Handle Broadcast
     if (userState?.mode === 'BROADCAST') {
         if (ctx.message.text === '/batal') {
             delete global.state[userId];
             return ctx.reply('❌ Broadcast dibatalkan.');
         }
-
-        ctx.reply('⏳ Mengirim broadcast ke seluruh user...');
+        ctx.reply('⏳ Mengirim broadcast...');
         delete global.state[userId];
 
         db.all('SELECT user_id FROM users', [], async (err, rows) => {
@@ -388,56 +370,52 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
             for (const row of rows) {
                 try {
                     if (ctx.message.photo) {
-                        // Broadcast Foto
                         const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
                         const caption = ctx.message.caption ? `📢 <b>INFO ADMIN</b>\n\n${ctx.message.caption}` : '';
                         await bot.telegram.sendPhoto(row.user_id, photoId, { caption: caption, parse_mode: 'HTML' });
                     } else {
-                        // Broadcast Teks
                         await bot.telegram.sendMessage(row.user_id, `📢 <b>INFO ADMIN</b>\n\n${ctx.message.text}`, {parse_mode:'HTML'});
                     }
                     success++;
                     await new Promise(r => setTimeout(r, 200)); 
                 } catch (e) {}
             }
-            ctx.reply(`✅ Broadcast selesai. Terkirim ke ${success} user.`);
+            ctx.reply(`✅ Terkirim ke ${success} user.`);
         });
         return;
     }
 
-    // Handle Restore Database
+    // Handle Restore
     if (userState?.mode === 'RESTORE' && ctx.message.document) {
         const doc = ctx.message.document;
-        if (!doc.file_name.endsWith('.sqlite')) return ctx.reply('❌ File harus berformat .sqlite');
+        if (!doc.file_name.endsWith('.sqlite')) return ctx.reply('❌ File harus .sqlite');
 
         try {
             const fileLink = await ctx.telegram.getFileLink(doc.file_id);
             const writer = fs.createWriteStream('./database.sqlite');
             const response = await axios({ url: fileLink.href, method: 'GET', responseType: 'stream' });
-            
             response.data.pipe(writer);
 
             writer.on('finish', () => {
                 delete global.state[userId];
-                ctx.reply('✅ Database berhasil di-restore! Silakan restart bot jika perlu.');
-                initDB(); // Reload koneksi DB
+                ctx.reply('✅ Database berhasil di-restore! Bot siap.');
+                initDB();
             });
-            writer.on('error', () => ctx.reply('❌ Gagal menulis file.'));
         } catch (e) {
-            ctx.reply('❌ Gagal download file.');
+            ctx.reply('❌ Gagal download.');
         }
     }
 });
 
-// PANEL ADMIN (UPDATE)
+// PANEL ADMIN
 bot.action('admin_panel', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    ctx.editMessageText('🔒 <b>Admin Panel v7.5</b>', {
+    ctx.editMessageText('🔒 <b>Admin Panel</b>', {
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: [
             [Markup.button.callback('📦 Cek Sisa Stok', 'check_stock')],
-            [Markup.button.callback('📡 Broadcast (Foto/Teks)', 'start_broadcast')],
-            [Markup.button.callback('📤 Backup Manual', 'force_backup'), Markup.button.callback('📥 Restore DB', 'start_restore')],
+            [Markup.button.callback('📡 Broadcast', 'start_broadcast')],
+            [Markup.button.callback('📤 Backup', 'force_backup'), Markup.button.callback('📥 Restore', 'start_restore')],
             [Markup.button.callback('🔙 Kembali', 'back_home')]
         ]}
     });
@@ -445,70 +423,54 @@ bot.action('admin_panel', (ctx) => {
 
 bot.action('check_stock', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    const query = `
-        SELECT p.name, p.code, COUNT(s.id) as count 
-        FROM products p 
-        LEFT JOIN stocks s ON p.code = s.product_code AND s.status = 'available'
-        GROUP BY p.code
-    `;
-    db.all(query, [], (err, rows) => {
+    getStockReport((rows) => {
         let msg = '📊 <b>LAPORAN SISA STOK</b>\n\n';
         rows.forEach(r => { msg += `▫️ <b>${r.name}</b>: ${r.count} pcs\n`; });
-        msg += '\n<i>Gunakan /addstok (kode) (data) untuk menambah.</i>';
-        ctx.editMessageText(msg, {
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Kembali', 'admin_panel')]] }
-        });
+        msg += '\n<i>Tambah: /addstok (kode) (data)</i>';
+        ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Kembali', 'admin_panel')]] } });
     });
 });
 
 bot.action('start_broadcast', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     global.state[ADMIN_ID] = { mode: 'BROADCAST' };
-    ctx.reply('📡 <b>Mode Broadcast Aktif</b>\nSilakan kirim <b>Pesan Teks</b> atau <b>Foto + Caption</b> sekarang.\n\nKetik /batal untuk cancel.', {parse_mode:'HTML'});
+    ctx.reply('📡 Kirim Pesan / Foto sekarang. Ketik /batal untuk cancel.', {parse_mode:'HTML'});
 });
 
 bot.action('start_restore', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     global.state[ADMIN_ID] = { mode: 'RESTORE' };
-    ctx.reply('📥 <b>Mode Restore Database</b>\nSilakan kirim file <code>.sqlite</code> backup Anda kesini sekarang.', {parse_mode:'HTML'});
+    ctx.reply('📥 Kirim file <code>.sqlite</code> backup sekarang.', {parse_mode:'HTML'});
 });
 
 bot.action('force_backup', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    ctx.reply('⏳ Memproses backup manual...');
+    ctx.reply('⏳ Memproses backup...');
     runAutoBackup();
 });
 
 // AUTO BACKUP (JAM 00:00)
 const startBackupLoop = () => {
     const now = new Date();
-    if (now.getHours() === 0 && now.getMinutes() === 0) {
-        runAutoBackup();
-    }
+    if (now.getHours() === 0 && now.getMinutes() === 0) runAutoBackup();
     setTimeout(startBackupLoop, 60000);
 };
 startBackupLoop();
 
 function runAutoBackup() {
-    console.log('🔄 Menjalankan Auto Backup...');
     const backupName = `backup_db_${new Date().toISOString().split('T')[0]}.sqlite`;
-    
     fs.copyFile('./database.sqlite', backupName, async (err) => {
-        if (err) return console.error('❌ Backup Gagal:', err);
-        try {
-            await bot.telegram.sendDocument(ADMIN_ID, { source: backupName, filename: backupName }, {
-                caption: `📦 <b>AUTO BACKUP</b>\n📅 ${new Date().toLocaleString()}\n🛡️ <i>Simpan file ini untuk restore.</i>`,
-                parse_mode: 'HTML'
-            });
-            console.log('✅ Backup terkirim.');
-            fs.unlinkSync(backupName);
-        } catch (e) {
-            console.error('❌ Gagal kirim backup:', e);
+        if (!err) {
+            try {
+                await bot.telegram.sendDocument(ADMIN_ID, { source: backupName, filename: backupName }, {
+                    caption: `📦 <b>AUTO BACKUP</b>\n📅 ${new Date().toLocaleString()}`, parse_mode: 'HTML'
+                });
+                fs.unlinkSync(backupName);
+            } catch (e) {}
         }
     });
 }
 
 // Start
-bot.launch().then(() => console.log('🚀 BOT PLATINUM V7.5 READY!'));
+bot.launch().then(() => console.log('🚀 BOT READY!'));
 process.once('SIGINT', () => bot.stop('SIGINT'));
