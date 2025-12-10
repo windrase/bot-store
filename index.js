@@ -213,7 +213,7 @@ function formatAccountData(rawData) {
 }
 
 // ==========================================
-// 3. FITUR CEK KUOTA XL (API SIDOMPUL)
+// 3. FITUR CEK KUOTA XL (API SIDOMPUL V4)
 // ==========================================
 bot.action('menu_cek_kuota', (ctx) => {
     global.state[ctx.from.id] = { mode: 'INPUT_NOMOR_XL' };
@@ -226,52 +226,51 @@ bot.action('menu_cek_kuota', (ctx) => {
 async function processCekKuotaXL(ctx, msisdn) {
     const loadingMsg = await ctx.reply('⏳ <b>Sedang mengecek ke server Sidompul...</b>', {parse_mode: 'HTML'});
     
-    // Config API sesuai request
+    // Config API sesuai Script HTML yang diberikan (V4)
     const config = {
         method: 'get',
-        url: `https://apigw.kmsp-store.com/sidompul/v1/cek_kuota`,
-        params: { msisdn: msisdn, isJSON: true },
+        url: `https://apigw.kmsp-store.com/sidompul/v4/cek_kuota`,
+        params: { msisdn: msisdn, isJSON: 'true' },
         headers: { 
             'Authorization': 'Basic c2lkb21wdWxhcGk6YXBpZ3drbXNw', 
-            'X-API-Key': '6fb99971-2a2f-40ed-815d-a64df9f3c975', 
-            'X-App-Version': '1.0.0'
+            'X-API-Key': '60ef29aa-a648-4668-90ae-20951ef90c55', // API KEY DARI SCRIPT HTML
+            'X-App-Version': '4.0.0', // VERSI DARI SCRIPT HTML
+            'Content-Type': 'application/x-www-form-urlencoded'
         }
     };
 
     try {
         const response = await axios(config);
-        const data = response.data;
+        const res = response.data;
 
-        // Parsing hasil (sesuaikan dengan format output Sidompul)
-        // Biasanya data ada di data.data.hasil atau sejenisnya.
-        // Kita dump dulu sebagai text rapi.
+        // API HTML structure: res.status (boolean), res.message, res.data.hasil (html string)
         
-        let replyText = `✅ <b>DETAIL KUOTA (${msisdn})</b>\n\n`;
-        
-        // Cek jika response sukses tapi tidak ada data paket
-        if (data.status === false || !data.data) {
-             replyText += "❌ Gagal mengambil data. Nomor salah atau server gangguan.";
+        if (res.status === true) {
+            // Bersihkan HTML tags (<br>, <b>) dari response agar rapi di Telegram
+            let rawHasil = res.data.hasil || "Tidak ada info.";
+            
+            // Ubah <br> jadi enter, dan strip tag HTML berbahaya
+            let cleanHasil = rawHasil
+                .replace(/<br\s*\/?>/gi, '\n') // Ganti <br> jadi enter
+                .replace(/<[^>]*>?/gm, '');   // Hapus semua tag HTML lain (clean text)
+
+            const replyText = `✅ <b>DETAIL KUOTA (${msisdn})</b>\n\n${cleanHasil}`;
+            
+            ctx.telegram.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
+            ctx.reply(replyText, { parse_mode: 'HTML' });
         } else {
-            // Parsing Array Hasil
-            const listPaket = data.data.hasil || []; 
-            if(listPaket.length === 0) {
-                replyText += "⚠️ Tidak ada paket aktif.";
-            } else {
-                listPaket.forEach(paket => {
-                    replyText += `📦 <b>${paket.name || 'Paket Data'}</b>\n`;
-                    replyText += `   └ ${paket.benefitData || paket.total || ''} | Exp: ${paket.expDate || '-'}\n\n`;
-                });
-            }
+            // Jika Gagal
+            const errMsg = res.data?.keteranganError || res.message || "Gagal mengambil data.";
+            ctx.telegram.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
+            ctx.reply(`❌ <b>GAGAL:</b>\n${errMsg}`, {parse_mode:'HTML'});
         }
 
-        ctx.telegram.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
-        ctx.reply(replyText, { parse_mode: 'HTML' });
         delete global.state[ctx.from.id];
 
     } catch (error) {
         console.error("API Sidompul Error:", error.message);
         ctx.telegram.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
-        ctx.reply('❌ <b>Terjadi Kesalahan!</b>\nPastikan nomor XL/AXIS benar atau coba lagi nanti.', {parse_mode:'HTML'});
+        ctx.reply('❌ <b>Terjadi Kesalahan!</b>\nNomor salah atau server gangguan.', {parse_mode:'HTML'});
         delete global.state[ctx.from.id];
     }
 }
@@ -387,7 +386,6 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
     // --- A. USER: INPUT CEK KUOTA XL ---
     if (userState?.mode === 'INPUT_NOMOR_XL' && text) {
         if (text === '/batal') { delete global.state[userId]; return ctx.reply('❌ Batal.'); }
-        // Validasi Nomor (08xxx atau 628xxx)
         if (!/^(08|628)[0-9]{8,12}$/.test(text)) return ctx.reply('⚠️ Format nomor salah! Gunakan awalan 08xx atau 628xx.');
         return processCekKuotaXL(ctx, text);
     }
@@ -603,7 +601,7 @@ function runAutoBackup() {
         if (!err) {
             try {
                 await bot.telegram.sendDocument(ADMIN_ID, { source: backupName, filename: backupName }, {
-                    caption: `📦 <b>AUTO BACKUP</b>`, parse_mode: 'HTML'
+                    caption: `📦 <b>AUTO BACKUP</b>\n📅 ${new Date().toLocaleString()}`, parse_mode: 'HTML'
                 });
                 fs.unlinkSync(backupName);
             } catch (e) {}
