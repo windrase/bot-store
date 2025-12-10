@@ -1,6 +1,22 @@
 const sqlite3 = require('sqlite3').verbose();
 const db = new sqlite3.Database('./database.sqlite');
 
+const seedProducts = () => {
+    // Daftar Produk Default
+    const products = [
+        { code: 'netflix_1b', name: 'Netflix Premium 1 Bulan', price: 25000, desc: '4K UHD, Sharing Profile, Garansi' },
+        { code: 'yt_prem', name: 'YouTube Premium 1 Bulan', price: 9000, desc: 'Via Invite Email Family' },
+        { code: 'capcut_pro', name: 'CapCut Pro 1 Tahun', price: 30000, desc: 'Login Email Sendiri / Suntik' },
+        { code: 'gemini_adv', name: 'Gemini Advanced', price: 15000, desc: 'Akun Shared AI Premium' },
+        { code: 'alight_mo', name: 'Alight Motion Pro', price: 10000, desc: 'Login Akun (No Watermark)' }
+    ];
+
+    const stmt = db.prepare("INSERT OR REPLACE INTO products (code, name, price, description) VALUES (?, ?, ?, ?)");
+    products.forEach(p => stmt.run(p.code, p.name, p.price, p.desc));
+    stmt.finalize();
+    console.log("✅ Database Produk Berhasil Dimuat.");
+};
+
 const initDB = () => {
     db.serialize(() => {
         // Tabel User
@@ -39,22 +55,10 @@ const initDB = () => {
             timestamp INTEGER,
             qr_message_id INTEGER
         )`);
+        
+        // PENTING: Jalankan Seed Products setelah tabel dibuat
+        seedProducts(); 
     });
 };
 
-const seedProducts = () => {
-    // Daftar Produk
-    const products = [
-        { code: 'netflix_1b', name: 'Netflix Premium 1 Bulan', price: 25000, desc: '4K UHD, Sharing Profile, Garansi' },
-        { code: 'yt_prem', name: 'YouTube Premium 1 Bulan', price: 9000, desc: 'Via Invite Email Family' },
-        { code: 'capcut_pro', name: 'CapCut Pro 1 Tahun', price: 30000, desc: 'Login Email Sendiri / Suntik' },
-        { code: 'gemini_adv', name: 'Gemini Advanced', price: 15000, desc: 'Akun Shared AI Premium' },
-        { code: 'alight_mo', name: 'Alight Motion Pro', price: 10000, desc: 'Login Akun (No Watermark)' }
-    ];
-
-    const stmt = db.prepare("INSERT OR REPLACE INTO products (code, name, price, description) VALUES (?, ?, ?, ?)");
-    products.forEach(p => stmt.run(p.code, p.name, p.price, p.desc));
-    stmt.finalize();
-};
-
-module.exports = { db, initDB, seedProducts };
+module.exports = { db, initDB };
