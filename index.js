@@ -71,8 +71,7 @@ const showMainMenu = async (ctx, isEdit = false) => {
         const buttons = [
             [Markup.button.callback('🛒 Beli Produk', 'menu_produk'), Markup.button.callback('📦 Cek Stok', 'user_check_stock')],
             // MENU BARU: CEK KUOTA XL
-            [Markup.button.callback('📊 Cek Kuota XL', 'menu_cek_kuota')],
-            [Markup.button.callback('💳 Isi Saldo (QRIS)', 'topup_saldo')],
+            [Markup.button.callback('📊 Cek Kuota XL', 'menu_cek_kuota')], [Markup.button.callback('💳 Isi Saldo (QRIS)', 'topup_saldo')],
             [Markup.button.url('📞 Bantuan Admin', 'https://t.me/WINTUNELINGVPNN')]
         ];
 
