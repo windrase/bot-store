@@ -6,7 +6,7 @@ const path = require('path');
 const { db, initDB } = require('./database');
 const { buildPayload, headers, API_URL } = require('./api-cekpayment-orkut');
 
-//  CEK CONFIG
+// CEK CONFIG
 if (!process.env.BOT_TOKEN) {
     console.error('❌ ERROR: Jalankan "npm run setup" terlebih dahulu!');
     process.exit(1);
@@ -22,7 +22,7 @@ global.state = {};
 global.pendingDeposits = {};
 let lastRequestTime = 0;
 
-// Init DB
+// Init DB & Produk
 initDB();
 
 // Load Pending Transactions
@@ -32,14 +32,13 @@ db.all('SELECT * FROM pending_deposits WHERE status = "pending"', [], (err, rows
             amount: r.amount, userId: r.user_id, timestamp: r.timestamp,
             status: r.status, qrMessageId: r.qr_message_id
         });
-        console.log(`🔄 Loaded ${rows.length} pending deposits.`);
     }
 });
 
 const formatRp = (n) => 'Rp ' + parseInt(n).toLocaleString('id-ID');
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
-// MENU UTAMA (LOGIKA ANTI-FREEZE)
+// MENU UTAMA
 const showMainMenu = async (ctx, isEdit = false) => {
     const userId = ctx.from.id;
     const username = ctx.from.username ? `@${ctx.from.username}` : 'Hidden';
@@ -96,7 +95,6 @@ bot.action(['back_home', 'start'], async (ctx) => {
 });
 
 // FITUR CEK STOK & BELI
-// Fungsi Query Stok (Dipakai Admin & User)
 const getStockReport = (cb) => {
     const query = `
         SELECT p.name, p.code, COUNT(s.id) as count 
@@ -194,7 +192,7 @@ function formatAccountData(rawData) {
     return `🔐 <b>Akses:</b>\n<code>${rawData}</code>`;
 }
 
-// FITUR TOPUP & DEPOSIT
+// FITUR TOPUP
 bot.action('topup_saldo', async (ctx) => {
     await ctx.answerCbQuery();
     global.state[ctx.from.id] = { mode: 'INPUT_DEPOSIT' };
@@ -252,22 +250,11 @@ async function processDeposit(ctx, amount) {
     }
 }
 
-// ENGINE MUTASI & NOTIFIKASI
+// ENGINE MUTASI
 async function checkMutation() {
     if (Object.keys(global.pendingDeposits).length === 0) return;
 
     try {
-        // Hapus Invoice Expired
-        for (const [code, data] of Object.entries(global.pendingDeposits)) {
-            if (Date.now() - data.timestamp > 5 * 60 * 1000) {
-                bot.telegram.deleteMessage(data.userId, data.qrMessageId).catch(()=>{});
-                bot.telegram.sendMessage(data.userId, '❌ Invoice Kedaluwarsa.');
-                delete global.pendingDeposits[code];
-                db.run('DELETE FROM pending_deposits WHERE unique_code = ?', [code]);
-            }
-        }
-
-        // Cek API
         const res = await axios.post(API_URL, buildPayload(), { headers, timeout: 5000 });
         const text = res.data;
         const blocks = typeof text === 'string' ? text.split('------------------------') : [];
@@ -278,6 +265,15 @@ async function checkMutation() {
         });
 
         for (const [code, data] of Object.entries(global.pendingDeposits)) {
+            // Hapus Expired
+            if (Date.now() - data.timestamp > 5 * 60 * 1000) {
+                bot.telegram.deleteMessage(data.userId, data.qrMessageId).catch(()=>{});
+                delete global.pendingDeposits[code];
+                db.run('DELETE FROM pending_deposits WHERE unique_code = ?', [code]);
+                continue;
+            }
+
+            // Cek Masuk
             if (incoming.includes(data.amount)) {
                 db.run('UPDATE users SET saldo = saldo + ? WHERE user_id = ?', [data.amount, data.userId]);
                 
@@ -301,24 +297,21 @@ async function checkMutation() {
 const startMutationLoop = async () => { await checkMutation(); setTimeout(startMutationLoop, 10000); };
 startMutationLoop();
 
-// HANDLER TEXT & ADMIN LOGIC
+// HANDLER ADMIN & TEXT
 bot.on(['text', 'photo', 'document'], async (ctx) => {
     const userId = ctx.from.id;
     const userState = global.state[userId];
 
-    // 1. Handle Input Deposit User
     if (userState?.mode === 'INPUT_DEPOSIT' && ctx.message.text) {
         const amount = parseInt(ctx.message.text.replace(/[^0-9]/g, ''));
         if (isNaN(amount) || amount < 1000) return ctx.reply('⚠️ Minimal deposit Rp 1.000');
         return processDeposit(ctx, amount);
     }
 
-    // 2. Logic Admin
     if (userId !== ADMIN_ID) return;
 
-    // Command Add Saldo
     if (ctx.message.text && ctx.message.text.startsWith('/addsaldo')) {
-        const args = ctx.message.text.split(' ');
+        const args = ctx.message.text.trim().split(/\s+/); // Fix Spasi Ganda
         const targetId = args[1];
         const amount = parseInt(args[2]);
 
@@ -335,19 +328,18 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
         return;
     }
 
-    // Command Add Stok (DENGAN VALIDASI)
+    // FIX: ADDSTOK DENGAN REGEX SPASI YANG LEBIH KUAT
     if (ctx.message.text && ctx.message.text.startsWith('/addstok')) {
-        const args = ctx.message.text.split(' ');
-        const code = args[1];
-        const data = args.slice(2).join(' ');
+        const parts = ctx.message.text.trim().split(/\s+/);
+        const code = parts[1];
+        // Gabungkan sisanya sebagai data, karena mungkin ada spasi di password/nama profil
+        const data = parts.slice(2).join(' '); 
 
         if (!code || !data) return ctx.reply('❌ Format: /addstok <kode> <data>');
 
-        // Cek dulu apakah kode ada di database
         db.get('SELECT name FROM products WHERE code = ?', [code], (err, row) => {
-            if (!row) return ctx.reply(`❌ Kode '${code}' SALAH.\n\nKode tersedia:\n- netflix_1b\n- yt_prem\n- capcut_pro\n- gemini_adv\n- alight_mo`);
+            if (!row) return ctx.reply(`❌ Kode '${code}' TIDAK DITEMUKAN.\n\nKode yang benar:\n- netflix_1b\n- yt_prem\n- capcut_pro\n- gemini_adv\n- alight_mo`);
             
-            // Jika kode benar, insert
             db.run('INSERT INTO stocks (product_code, data_account, status) VALUES (?, ?, "available")', [code, data], (err) => {
                 if (err) return ctx.reply('❌ Database Error.');
                 ctx.reply(`✅ Stok <b>${row.name}</b> berhasil ditambah!`, {parse_mode:'HTML'});
@@ -356,7 +348,6 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
         return;
     }
 
-    // Handle Broadcast
     if (userState?.mode === 'BROADCAST') {
         if (ctx.message.text === '/batal') {
             delete global.state[userId];
@@ -385,20 +376,17 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
         return;
     }
 
-    // Handle Restore
     if (userState?.mode === 'RESTORE' && ctx.message.document) {
         const doc = ctx.message.document;
         if (!doc.file_name.endsWith('.sqlite')) return ctx.reply('❌ File harus .sqlite');
-
         try {
             const fileLink = await ctx.telegram.getFileLink(doc.file_id);
             const writer = fs.createWriteStream('./database.sqlite');
             const response = await axios({ url: fileLink.href, method: 'GET', responseType: 'stream' });
             response.data.pipe(writer);
-
             writer.on('finish', () => {
                 delete global.state[userId];
-                ctx.reply('✅ Database berhasil di-restore! Bot siap.');
+                ctx.reply('✅ Database restore sukses! Data produk dan saldo sudah kembali.');
                 initDB();
             });
         } catch (e) {
