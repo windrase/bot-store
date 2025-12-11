@@ -6,7 +6,7 @@ const path = require('path');
 const { db, initDB } = require('./database');
 const { buildPayload, headers, API_URL } = require('./api-cekpayment-orkut');
 
-// --- CEK CONFIG ---
+// CEK CONFIG
 if (!process.env.BOT_TOKEN) {
     console.error('❌ ERROR: Jalankan "npm run setup" terlebih dahulu!');
     process.exit(1);
@@ -17,7 +17,7 @@ const ADMIN_ID = parseInt(process.env.ADMIN_ID);
 const CHANNEL_ID = process.env.CHANNEL_ID;
 const QRIS_DATA = process.env.DATA_QRIS;
 
-// --- GLOBAL STATE ---
+// GLOBAL STATE
 global.state = {}; 
 global.pendingDeposits = {};
 let lastRequestTime = 0;
@@ -39,9 +39,7 @@ db.all('SELECT * FROM pending_deposits WHERE status = "pending"', [], (err, rows
 const formatRp = (n) => 'Rp ' + parseInt(n).toLocaleString('id-ID');
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
-// ==========================================
 // 1. MENU UTAMA
-// ==========================================
 const showMainMenu = async (ctx, isEdit = false) => {
     const userId = ctx.from.id;
     const username = ctx.from.username ? `@${ctx.from.username}` : 'Hidden';
@@ -70,8 +68,8 @@ const showMainMenu = async (ctx, isEdit = false) => {
 
         const buttons = [
             [Markup.button.callback('🛒 Beli Produk', 'menu_produk'), Markup.button.callback('📦 Cek Stok', 'user_check_stock')],
-            // MENU BARU: CEK KUOTA XL
-            [Markup.button.callback('📊 Cek Kuota XL', 'menu_cek_kuota')], [Markup.button.callback('💳 Isi Saldo (QRIS)', 'topup_saldo')],
+            [Markup.button.callback('📊 Cek Kuota XL', 'menu_cek_kuota')],
+            [Markup.button.callback('💳 Isi Saldo (QRIS)', 'topup_saldo')],
             [Markup.button.url('📞 Bantuan Admin', 'https://t.me/WINTUNELINGVPNN')]
         ];
 
@@ -98,9 +96,7 @@ bot.action(['back_home', 'start'], async (ctx) => {
     showMainMenu(ctx, true);
 });
 
-// ==========================================
-// 2. FITUR CEK STOK & BELI
-// ==========================================
+// FITUR CEK STOK & BELI
 const getStockReport = (cb) => {
     const query = `
         SELECT p.name, p.code, COUNT(s.id) as count 
@@ -145,7 +141,7 @@ bot.action('menu_produk', (ctx) => {
 bot.action(/view_(.+)/, (ctx) => {
     const code = ctx.match[1];
     db.get('SELECT * FROM products WHERE code = ?', [code], (err, p) => {
-        if (!p) return ctx.answerCbQuery('❌ Produk tidak ditemukan/dihapus.');
+        if (!p) return ctx.answerCbQuery('❌ Produk tidak ditemukan.');
         
         db.get('SELECT COUNT(*) as c FROM stocks WHERE product_code = ? AND status = "available"', [code], (err, s) => {
             const stok = s ? s.c : 0;
@@ -211,12 +207,10 @@ function formatAccountData(rawData) {
     return `🔐 <b>Akses:</b>\n<code>${rawData}</code>`;
 }
 
-// ==========================================
-// 3. FITUR CEK KUOTA XL (API SIDOMPUL V4)
-// ==========================================
+// FITUR CEK KUOTA XL (API SIDOMPUL V4)
 bot.action('menu_cek_kuota', (ctx) => {
     global.state[ctx.from.id] = { mode: 'INPUT_NOMOR_XL' };
-    ctx.editMessageText('📊 <b>CEK KUOTA XL / AXIS</b>\n\nSilahkan kirim <b>NOMOR HP</b> yang ingin dicek.\nContoh: <code>087812345678</code>\n\n<i>Ketik /batal untuk cancel.</i>', {
+    ctx.editMessageText('📊 <b>CEK KUOTA XL / AXIS</b>\n\nSilahkan kirim <b>NOMOR HP</b> yang ingin dicek.\nContoh: <code>6287812345678</code>\n\n<i>Ketik /batal untuk cancel.</i>', {
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Batal', 'back_home')]] }
     });
@@ -224,16 +218,14 @@ bot.action('menu_cek_kuota', (ctx) => {
 
 async function processCekKuotaXL(ctx, msisdn) {
     const loadingMsg = await ctx.reply('⏳ <b>Sedang mengecek ke server Sidompul...</b>', {parse_mode: 'HTML'});
-    
-    // Config API sesuai Script HTML yang diberikan (V4)
     const config = {
         method: 'get',
         url: `https://apigw.kmsp-store.com/sidompul/v4/cek_kuota`,
         params: { msisdn: msisdn, isJSON: 'true' },
         headers: { 
             'Authorization': 'Basic c2lkb21wdWxhcGk6YXBpZ3drbXNw', 
-            'X-API-Key': '60ef29aa-a648-4668-90ae-20951ef90c55', // API KEY DARI SCRIPT HTML
-            'X-App-Version': '4.0.0', // VERSI DARI SCRIPT HTML
+            'X-API-Key': '60ef29aa-a648-4668-90ae-20951ef90c55', 
+            'X-App-Version': '4.0.0', 
             'Content-Type': 'application/x-www-form-urlencoded'
         }
     };
@@ -241,46 +233,30 @@ async function processCekKuotaXL(ctx, msisdn) {
     try {
         const response = await axios(config);
         const res = response.data;
-
-        // API HTML structure: res.status (boolean), res.message, res.data.hasil (html string)
-        
         if (res.status === true) {
-            // Bersihkan HTML tags (<br>, <b>) dari response agar rapi di Telegram
-            let rawHasil = res.data.hasil || "Tidak ada info.";
-            
-            // Ubah <br> jadi enter, dan strip tag HTML berbahaya
-            let cleanHasil = rawHasil
-                .replace(/<br\s*\/?>/gi, '\n') // Ganti <br> jadi enter
-                .replace(/<[^>]*>?/gm, '');   // Hapus semua tag HTML lain (clean text)
-
+            let cleanHasil = (res.data.hasil || "Tidak ada info.")
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/<[^>]*>?/gm, '');
             const replyText = `✅ <b>DETAIL KUOTA (${msisdn})</b>\n\n${cleanHasil}`;
-            
             ctx.telegram.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
             ctx.reply(replyText, { parse_mode: 'HTML' });
         } else {
-            // Jika Gagal
             const errMsg = res.data?.keteranganError || res.message || "Gagal mengambil data.";
             ctx.telegram.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
             ctx.reply(`❌ <b>GAGAL:</b>\n${errMsg}`, {parse_mode:'HTML'});
         }
-
         delete global.state[ctx.from.id];
-
     } catch (error) {
-        console.error("API Sidompul Error:", error.message);
         ctx.telegram.deleteMessage(loadingMsg.chat.id, loadingMsg.message_id);
         ctx.reply('❌ <b>Terjadi Kesalahan!</b>\nNomor salah atau server gangguan.', {parse_mode:'HTML'});
         delete global.state[ctx.from.id];
     }
 }
 
-// ==========================================
-// 4. FITUR TOPUP
-// ==========================================
+// FITUR TOPUP
 bot.action('topup_saldo', async (ctx) => {
     await ctx.answerCbQuery();
     global.state[ctx.from.id] = { mode: 'INPUT_DEPOSIT' };
-    
     ctx.editMessageText('💰 <b>Isi Saldo Otomatis</b>\n\nKetik nominal (min 1000) atau pilih tombol:', {
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: [
@@ -329,26 +305,25 @@ async function processDeposit(ctx, amount) {
         delete global.state[userId];
 
     } catch (e) {
-        console.error(e);
         ctx.reply('❌ Gagal membuat QRIS. Coba lagi nanti.');
     }
 }
 
-// ==========================================
-// 5. ENGINE MUTASI
-// ==========================================
+// ENGINE MUTASI
 async function checkMutation() {
     if (Object.keys(global.pendingDeposits).length === 0) return;
 
     try {
         const res = await axios.post(API_URL, buildPayload(), { headers, timeout: 5000 });
         const text = res.data;
-        const blocks = typeof text === 'string' ? text.split('------------------------') : [];
         const incoming = [];
-        blocks.forEach(b => {
-            const m = b.match(/Kredit\s*:\s*(?:Rp\s*)?([\d.]+)/i);
-            if (m) incoming.push(parseInt(m[1].replace(/\./g, '')));
-        });
+        if (typeof text === 'string') {
+            const blocks = text.split('------------------------');
+            blocks.forEach(b => {
+                const m = b.match(/Kredit\s*:\s*(?:Rp\s*)?([\d.]+)/i);
+                if (m) incoming.push(parseInt(m[1].replace(/\./g, '')));
+            });
+        }
 
         for (const [code, data] of Object.entries(global.pendingDeposits)) {
             if (Date.now() - data.timestamp > 5 * 60 * 1000) {
@@ -374,22 +349,18 @@ async function checkMutation() {
 const startMutationLoop = async () => { await checkMutation(); setTimeout(startMutationLoop, 10000); };
 startMutationLoop();
 
-// ==========================================
-// 6. HANDLER TEXT & ADMIN LOGIC
-// ==========================================
+// HANDLER TEXT & ADMIN LOGIC (INTERACTIVE)
 bot.on(['text', 'photo', 'document'], async (ctx) => {
     const userId = ctx.from.id;
     const userState = global.state[userId];
     const text = ctx.message.text || '';
 
-    // --- A. USER: INPUT CEK KUOTA XL ---
+    // INPUT USER
     if (userState?.mode === 'INPUT_NOMOR_XL' && text) {
         if (text === '/batal') { delete global.state[userId]; return ctx.reply('❌ Batal.'); }
         if (!/^(08|628)[0-9]{8,12}$/.test(text)) return ctx.reply('⚠️ Format nomor salah! Gunakan awalan 08xx atau 628xx.');
         return processCekKuotaXL(ctx, text);
     }
-
-    // --- B. USER: INPUT DEPOSIT ---
     if (userState?.mode === 'INPUT_DEPOSIT' && text) {
         const amount = parseInt(text.replace(/[^0-9]/g, ''));
         if (isNaN(amount) || amount < 1000) return ctx.reply('⚠️ Minimal deposit Rp 1.000');
@@ -398,9 +369,10 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
 
     if (userId !== ADMIN_ID) return;
 
-    // --- C. ADMIN: TAMBAH PRODUK ---
+    // ADD PRODUCT WIZARD
     if (userState?.mode.startsWith('ADD_PROD_')) {
-        if (text === '/batal') { delete global.state[userId]; return ctx.reply('❌ Batal.'); }
+        if (text === '/batal') { delete global.state[userId]; return ctx.reply('❌ Batal tambah produk.'); }
+        
         if (userState.mode === 'ADD_PROD_CODE') {
             const code = text.trim().toLowerCase().replace(/\s+/g, '_');
             db.get('SELECT code FROM products WHERE code = ?', [code], (err, row) => {
@@ -414,6 +386,7 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
             ctx.reply(`✅ Nama: ${text}\n👉 Masukkan <b>HARGA</b> (Angka):`, {parse_mode:'HTML'});
         } else if (userState.mode === 'ADD_PROD_PRICE') {
             const price = parseInt(text.replace(/[^0-9]/g, ''));
+            if (isNaN(price)) return ctx.reply('❌ Harga harus angka!');
             userState.data.price = price;
             global.state[userId] = { mode: 'ADD_PROD_DESC', data: userState.data };
             ctx.reply(`✅ Harga: ${price}\n👉 Masukkan <b>DESKRIPSI</b>:`, {parse_mode:'HTML'});
@@ -426,33 +399,18 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
         return;
     }
 
-    // --- D. ADMIN: HAPUS & UBAH ---
-    if (userState?.mode === 'DEL_PROD') {
-        if (text === '/batal') { delete global.state[userId]; return ctx.reply('❌ Batal.'); }
-        db.run('DELETE FROM products WHERE code = ?', [text.trim()], function(err) {
-            if (this.changes > 0) ctx.reply('✅ Produk dihapus.'); else ctx.reply('❌ Kode salah.');
+    // EDIT PRICE
+    if (userState?.mode === 'EDIT_PRICE_VAL') {
+        const price = parseInt(text.replace(/[^0-9]/g, ''));
+        if (isNaN(price)) return ctx.reply('❌ Harga harus angka!');
+        db.run('UPDATE products SET price = ? WHERE code = ?', [price, userState.data.code], (err) => {
+            ctx.reply(`✅ Harga produk <b>${userState.data.code}</b> diubah ke <b>${formatRp(price)}</b>`, {parse_mode:'HTML'});
             delete global.state[userId];
         });
         return;
     }
-    if (userState?.mode === 'EDIT_PRICE_CODE') {
-        if (text === '/batal') { delete global.state[userId]; return ctx.reply('❌ Batal.'); }
-        db.get('SELECT * FROM products WHERE code = ?', [text.trim()], (err, row) => {
-            if (!row) return ctx.reply('❌ Kode salah.');
-            global.state[userId] = { mode: 'EDIT_PRICE_VAL', data: { code: text.trim() } };
-            ctx.reply(`Harga lama: ${formatRp(row.price)}\n👉 Masukkan HARGA BARU:`);
-        });
-        return;
-    }
-    if (userState?.mode === 'EDIT_PRICE_VAL') {
-        const price = parseInt(text.replace(/[^0-9]/g, ''));
-        db.run('UPDATE products SET price = ? WHERE code = ?', [price, userState.data.code], (err) => {
-            ctx.reply('✅ Harga diubah.'); delete global.state[userId];
-        });
-        return;
-    }
 
-    // --- E. ADMIN COMMANDS ---
+    // ADMIN COMMANDS
     if (text.startsWith('/addsaldo')) {
         const args = text.trim().split(/\s+/);
         const targetId = args[1];
@@ -514,16 +472,14 @@ bot.on(['text', 'photo', 'document'], async (ctx) => {
     }
 });
 
-// ==========================================
-// 7. PANEL ADMIN
-// ==========================================
+// PANEL ADMIN INTERAKTIF
 bot.action('admin_panel', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    ctx.editMessageText('🔒 <b>Admin Panel</b>', {
+    ctx.editMessageText('🔒 <b>Admin Panel v9.0</b>', {
         parse_mode: 'HTML',
         reply_markup: { inline_keyboard: [
             [Markup.button.callback('➕ Tambah Produk', 'add_product')],
-            [Markup.button.callback('❌ Hapus Produk', 'delete_product_menu'), Markup.button.callback('💰 Ubah Harga', 'edit_price_menu')],
+            [Markup.button.callback('❌ Hapus Produk', 'list_delete_prod'), Markup.button.callback('💰 Ubah Harga', 'list_edit_price')],
             [Markup.button.callback('📦 Cek Stok', 'check_stock'), Markup.button.callback('📡 Broadcast', 'start_broadcast')],
             [Markup.button.callback('📤 Backup', 'force_backup'), Markup.button.callback('📥 Restore', 'start_restore')],
             [Markup.button.callback('🔙 Kembali', 'back_home')]
@@ -537,26 +493,47 @@ bot.action('add_product', (ctx) => {
     ctx.reply('➕ <b>PRODUK BARU</b>\nMasukkan KODE UNIK (ex: <code>netflix_uhd</code>):', {parse_mode:'HTML'});
 });
 
-bot.action('delete_product_menu', (ctx) => {
+// LIST DELETE (BUTTONS)
+bot.action('list_delete_prod', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     db.all('SELECT code, name FROM products', [], (err, rows) => {
-        let msg = '❌ <b>HAPUS PRODUK</b>\nKetik KODE yang mau dihapus:\n\n';
-        rows.forEach(r => msg += `• <code>${r.code}</code> (${r.name})\n`);
-        global.state[ADMIN_ID] = { mode: 'DEL_PROD' };
-        ctx.reply(msg, {parse_mode:'HTML'});
+        if (!rows || rows.length === 0) return ctx.reply("Belum ada produk.");
+        const btns = rows.map(r => [Markup.button.callback(`❌ ${r.name}`, `del_confirm_${r.code}`)]);
+        btns.push([Markup.button.callback('🔙 Batal', 'admin_panel')]);
+        ctx.editMessageText('❌ <b>Pilih Produk yg dihapus:</b>', { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } });
     });
 });
 
-bot.action('edit_price_menu', (ctx) => {
+bot.action(/del_confirm_(.+)/, (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const code = ctx.match[1];
+    db.run('DELETE FROM products WHERE code = ?', [code], function(err) {
+        if (!err) ctx.reply(`✅ Produk <b>${code}</b> telah dihapus permanen.`, {parse_mode:'HTML'});
+        // Refresh menu
+        ctx.deleteMessage().catch(()=>{});
+        // Optional: show admin panel again
+    });
+});
+
+// LIST EDIT PRICE (BUTTONS)
+bot.action('list_edit_price', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     db.all('SELECT code, name, price FROM products', [], (err, rows) => {
-        let msg = '💰 <b>UBAH HARGA</b>\nKetik KODE produk:\n\n';
-        rows.forEach(r => msg += `• <code>${r.code}</code> : ${formatRp(r.price)}\n`);
-        global.state[ADMIN_ID] = { mode: 'EDIT_PRICE_CODE' };
-        ctx.reply(msg, {parse_mode:'HTML'});
+        if (!rows || rows.length === 0) return ctx.reply("Belum ada produk.");
+        const btns = rows.map(r => [Markup.button.callback(`💰 ${r.name} (${formatRp(r.price)})`, `edit_p_sel_${r.code}`)]);
+        btns.push([Markup.button.callback('🔙 Batal', 'admin_panel')]);
+        ctx.editMessageText('💰 <b>Pilih Produk yg diubah harganya:</b>', { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } });
     });
 });
 
+bot.action(/edit_p_sel_(.+)/, (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const code = ctx.match[1];
+    global.state[ADMIN_ID] = { mode: 'EDIT_PRICE_VAL', data: { code: code } };
+    ctx.reply(`👉 Masukkan <b>HARGA BARU</b> untuk <code>${code}</code> (Angka saja):`, {parse_mode:'HTML'});
+});
+
+// ... (Other admin actions like check_stock, broadcast remain same as v8.0)
 bot.action('check_stock', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     getStockReport((rows) => {
@@ -566,27 +543,22 @@ bot.action('check_stock', (ctx) => {
         ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Kembali', 'admin_panel')]] } });
     });
 });
-
 bot.action('start_broadcast', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     global.state[ADMIN_ID] = { mode: 'BROADCAST' };
     ctx.reply('📡 Kirim pesan sekarang.');
 });
-
 bot.action('start_restore', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     global.state[ADMIN_ID] = { mode: 'RESTORE' };
     ctx.reply('📥 Kirim file backup.');
 });
-
 bot.action('force_backup', (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     ctx.reply('⏳ Backup...'); runAutoBackup();
 });
 
-// ==========================================
-// 8. AUTO BACKUP
-// ==========================================
+// AUTO BACKUP
 const startBackupLoop = () => {
     const now = new Date();
     if (now.getHours() === 0 && now.getMinutes() === 0) runAutoBackup();
@@ -600,7 +572,7 @@ function runAutoBackup() {
         if (!err) {
             try {
                 await bot.telegram.sendDocument(ADMIN_ID, { source: backupName, filename: backupName }, {
-                    caption: `📦 <b>AUTO BACKUP</b>\n📅 ${new Date().toLocaleString()}`, parse_mode: 'HTML'
+                    caption: `📦 <b>AUTO BACKUP</b>`, parse_mode: 'HTML'
                 });
                 fs.unlinkSync(backupName);
             } catch (e) {}
