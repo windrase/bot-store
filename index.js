@@ -54,7 +54,7 @@ const showMainMenu = async (ctx, isEdit = false) => {
         const saldo = row ? row.saldo : 0;
         
         const message = `╔════════════════════╗
-   <b>⚡ WINTUNELING STORE ⚡</b>    
+     <b>⚡ WINTUNELING STORE ⚡</b>    
 ╚════════════════════╝
 
 ╭─── 👤 <b>USER PROFILE</b>
