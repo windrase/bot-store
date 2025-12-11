@@ -53,16 +53,26 @@ const showMainMenu = async (ctx, isEdit = false) => {
     db.get('SELECT saldo FROM users WHERE user_id = ?', [userId], async (err, row) => {
         const saldo = row ? row.saldo : 0;
         
-        const message = `╔════════════════════╗
-     <b>⚡ WINTUNELING STORE ⚡</b>    
+const message = `╔════════════════════╗
+ <b>⚡ WINTUNELING STORE ⚡</b>
 ╚════════════════════╝
 
 ╭─── 👤 <b>USER PROFILE</b>
 │ 📛 <b>Nama :</b> ${fullName}
 │ 🆔 <b>ID :</b> <code>${userId}</code>
-│ 💎 <b>User :</b> ${username}
+│ 💎 <b>User :</b> @${username}
 │ 💵 <b>Saldo:</b> <code>${formatRp(saldo)}</code>
 ╰─────────────────
+<blockquote>
+<b>Kami adalah penyedia layanan Aplikasi Premium (Netflix, Spotify, Youtube, dll) dengan sistem <i>instant delivery</i> 24 jam.</b>
+
+Keamanan dan kepuasan pelanggan adalah prioritas kami.
+
+⚙️ <b>Sistem Transaksi:</b>
+Bot ini menggunakan sistem <b>Deposit Saldo</b>. Silakan lakukan pengisian saldo terlebih dahulu melalui menu yang tersedia sebelum memilih produk. Transaksi tidak dapat diproses jika saldo tidak mencukupi.
+
+<i>Terima kasih telah mempercayai kami sebagai solusi digital Anda.</i>
+</blockquote>
 
 👇 <b>Pilih Menu Transaksi:</b>`;
 
