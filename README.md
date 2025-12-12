@@ -1,14 +1,14 @@
-#Bot Store Telegram
+# Bot Store Telegram
 
-#Install
+# Install
 ```
 bash <(curl -s https://raw.githubusercontent.com/windrase/bot-store/main/install.sh)
 ```
-#StringQris
+# StringQris
 
 https://scanqr.org/
 
-#Ubah Token Dan Username di apipaymentcekorkut
+# Ubah Token Dan Username di apipaymentcekorkut
 ```bash
 const qs = require('qs');
 
