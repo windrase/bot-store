@@ -5,6 +5,7 @@
 bash <(curl -s https://raw.githubusercontent.com/windrase/bot-store/main/install.sh)
 ```
 #StringQris
+
 https://scanqr.org/
 
 #Ubah Token Dan Username di apipaymentcekorkut
