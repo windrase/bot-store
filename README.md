@@ -14,8 +14,8 @@ const qs = require('qs');
 
 function buildPayload() {
   return qs.stringify({
-    'username': 'allufi',
-    'token': '1991647:0jkip97VR6huEtrc2XvWUDsOBY5yFMxA',
+    'username': 'username',
+    'token': '1991xx:kskiskskzxxx',
     'jenis': 'masuk'
   });
 }
